@@ -1,9 +1,14 @@
 name: lupi
 channels:
+  - nvidia
+  - pytorch
   - conda-forge
   - defaults
 dependencies:
   - python==3.9
+  - pytorch
+  - torchvision
+  - cudatoolkit
   - pip
   - pip:
       - pillow==10.4.0
@@ -13,3 +18,4 @@ dependencies:
       - matplotlib==3.9.1
       - scikit-learn==1.5.1
       - tqdm
+      - wandb

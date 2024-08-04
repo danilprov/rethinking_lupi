@@ -29,13 +29,13 @@ For training, download the [Sarcos dataset](https://gaussianprocess.org/gpml/dat
 ```python sarcos.py```
 
 
-## Real-world experiment with [IJCAI15 competition](https://ijcai-15.org/repeat-buyers-prediction-competition/) data `real-world/`
+## Real-world experiment with [IJCAI15 competition](https://ijcai-15.org/repeat-buyers-prediction-competition/) data `bandit_data/`
 We compare Generalized distillation and TRAM on the Repeat Buyers Prediction dataset, a large-scale public dataset from the IJCAI-15 competition.
 The data provides users’ activity logs of an online retail platform, including user-related features,
 information about items at sale, and implicit multi-behavioral feedback such as click, add to cart, and purchase.
 
 For training: 
 1. download data from https://tianchi.aliyun.com/dataset/42
-2. copy `user_info_format1.csv` and `user_log_format1.csv` to `real-world/data/IJCAI15/`
-3. `cd real-world/`
+2. copy `user_info_format1.csv` and `user_log_format1.csv` to `bandit_data/data/IJCAI15/`
+3. `cd bandit_data/`
 4. run `python train.py`
