@@ -9,10 +9,10 @@ from contextlib import nullcontext
 
 import numpy as np
 import torch
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, accuracy_score
 
 from model import RegularModel, ModelConfig, TramModel, FullModel
-from utils import softmax, load_health_data
+from utils import softmax, load_health_data, load_nasa_data, load_drink_data, load_tinyimagenet
 
 # -----------------------------------------------------------------------------
 # I/O
@@ -27,7 +27,7 @@ dropout = 0.0
 bias = False  # do we use bias inside LayerNorm and Linear layers?
 # adamw optimizer
 learning_rate = 6e-3  # max learning rate
-max_iters = 60  # total number of training iterations
+max_iters = 1000  # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
@@ -54,13 +54,18 @@ ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torc
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
 # data
-dataset = 'health_data'
+dataset = 'tinyimagenet'#'drink'#'nasa'#'health_data'
 batch_size = 1024
-features = ['age_range', 'gender', 'dow']
-proxies = ['log_signal_0', 'signal_3_binary']  # we are not using add-to-cart as proxies
-target = 'signal_2_binary'
-data_dir = os.path.join('data', dataset)
-X_train, X_test, Z_train, Z_test, Y_train, Y_test = load_health_data()
+if dataset == 'health_data':
+    X_train, X_test, Z_train, Z_test, Y_train, Y_test = load_health_data()
+elif dataset == 'nasa':
+    X_train, X_test, Z_train, Z_test, Y_train, Y_test = load_nasa_data()
+elif dataset == 'drink':
+    X_train, X_test, Z_train, Z_test, Y_train, Y_test = load_drink_data()
+elif dataset in ['tinyimagenet', 'tinyimagenet_10']:
+    X_train, X_test, Z_train, Z_test, Y_train, Y_test = load_tinyimagenet()
+else:
+    raise ValueError('Unknown dataset')
 output_size = Y_train.shape[1]
 input_size_x = X_train.shape[1]
 input_size_z = Z_train.shape[1]
@@ -69,8 +74,8 @@ out_dir = 'logs/final_submission/' + dataset
 if master_process:
     os.makedirs(out_dir, exist_ok=True)
 # wandb logging
-wandb_log = True  # disabled by default
-wandb_project = 'final_submission' + dataset
+wandb_log = False  # disabled by default
+wandb_project = None
 wandb_run_name = None#'regular' + str(time.time())
 
 # -----------------------------------------------------------------------------
@@ -108,11 +113,11 @@ def get_batch(split):
 
     return x, z, y
 
-num_runs = 2
-drop_proxies_values = [0., -3., -2., -1.]
-valloss_values = {key: np.zeros((max_iters // eval_interval, num_runs)) for key in drop_proxies_values}
-trainloss_values = {key: np.zeros((max_iters // eval_interval, num_runs)) for key in drop_proxies_values}
-metric_values = {key: np.zeros((max_iters // eval_interval, num_runs)) for key in drop_proxies_values}
+num_runs = 10
+drop_proxies_values = [-1., 0., -3., -2.]
+valloss_values = {key: np.zeros((max_iters // eval_interval + 1, num_runs)) for key in drop_proxies_values}
+trainloss_values = {key: np.zeros((max_iters // eval_interval + 1, num_runs)) for key in drop_proxies_values}
+metric_values = {key: np.zeros((max_iters // eval_interval + 1, num_runs)) for key in drop_proxies_values}
 
 for drop_proxies in drop_proxies_values:
     for run in range(num_runs):
@@ -122,7 +127,8 @@ for drop_proxies in drop_proxies_values:
         best_val_loss = 1e9
         config['drop_proxies'] = drop_proxies
         # model init
-        model_args = dict(n_embd=n_embd, bias=bias, dropout=dropout)  # start with model_args from command line
+        model_args = dict(input_size_x=input_size_x, input_size_z=input_size_z, output_size=output_size,
+                          n_embd=n_embd, bias=bias, dropout=dropout)  # start with model_args from command line
         # init a new model from scratch
         print("Initializing a new model from scratch")
         gptconf = ModelConfig(**model_args)
@@ -158,9 +164,14 @@ for drop_proxies in drop_proxies_values:
                     with ctx:
                         logits, _, loss = model(X, Z, Y)
                     if split == 'val':
-                        roc_auc = 2 * roc_auc_score(Y[:, 0].cpu().numpy(),
-                                                    torch.min(logits, dim=1)[0].cpu().float().numpy()) - 1
-                        roc_aucs[k] = roc_auc
+                        if dataset == 'health':
+                            roc_auc = 2 * roc_auc_score(Y[:, 0].cpu().numpy(),
+                                                        torch.min(logits, dim=1)[0].cpu().float().numpy()) - 1
+                            roc_aucs[k] = roc_auc
+                        elif dataset in ['nasa', 'drink', 'tinyimagenet', 'tinyimagenet_10']:
+                            roc_auc = accuracy_score(torch.argmax(Y, dim=1).cpu().numpy(),
+                                                     torch.argmax(logits, dim=1).cpu().float().numpy())
+                            roc_aucs[k] = roc_auc
                     losses[k] = loss.item()
                 out[split] = losses.mean()
             X_val = torch.from_numpy((X_test).astype(np.float32)).to(device)
@@ -168,7 +179,11 @@ for drop_proxies in drop_proxies_values:
             Y_val = torch.from_numpy((Y_test).astype(np.float32)).to(device)
             # Z_dummy = torch.zeros_like(Z_val).to(device)
             logits_val, loss_val, _ = model(X_val, Z_val, Y_val)
-            roc_auc = 2 * roc_auc_score(Y_val[:, 0].cpu().numpy(), torch.min(logits_val, dim=1)[0].cpu().numpy()) - 1
+            if dataset == 'health':
+                roc_auc = 2 * roc_auc_score(Y_val[:, 0].cpu().numpy(), torch.min(logits_val, dim=1)[0].cpu().numpy()) - 1
+            elif dataset in ['nasa', 'drink', 'tinyimagenet', 'tinyimagenet_10']:
+                roc_auc = accuracy_score(torch.argmax(Y_val, dim=1).cpu().numpy(),
+                                         torch.argmax(logits_val, dim=1).cpu().float().numpy())
             print(f'Test (whole set) ROC AUC: {roc_auc}')
             print(f'Test ROC AUC: {roc_aucs.mean()}, std: {roc_aucs.std()}')
             model.train()

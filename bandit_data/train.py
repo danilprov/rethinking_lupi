@@ -122,11 +122,11 @@ def get_batch(split):
 
     return x, a, z, y
 
-drop_proxies_values = [0., -3., -2., -1.]
-best_valloss_values = {key: [] for key in drop_proxies_values}
-best_trainloss_values = {key: [] for key in drop_proxies_values}
-best_metric_values = {key: [] for key in drop_proxies_values}
 num_runs = 10
+drop_proxies_values = [0., -3., -2., -1.]
+valloss_values = {key: np.zeros((max_iters // eval_interval + 1, num_runs)) for key in drop_proxies_values}
+trainloss_values = {key: np.zeros((max_iters // eval_interval + 1, num_runs)) for key in drop_proxies_values}
+metric_values = {key: np.zeros((max_iters // eval_interval + 1, num_runs)) for key in drop_proxies_values}
 
 for drop_proxies in drop_proxies_values:
     for run in range(num_runs):
@@ -234,6 +234,9 @@ for drop_proxies in drop_proxies_values:
                 losses, roc_auc_local = estimate_loss()
                 #roc_auc = estimate_metric()
                 print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+                valloss_values[drop_proxies][iter_num // eval_interval, run] = losses['val']
+                trainloss_values[drop_proxies][iter_num // eval_interval, run] = losses['train']
+                metric_values[drop_proxies][iter_num // eval_interval, run] = roc_auc_local
                 if wandb_log:
                     wandb.log({
                         "iter": iter_num,
@@ -297,23 +300,20 @@ for drop_proxies in drop_proxies_values:
 
             # termination conditions
             if iter_num > max_iters:
-                best_valloss_values[drop_proxies].append(best_val_loss)
-                best_trainloss_values[drop_proxies].append(best_train_loss.item())
-                best_metric_values[drop_proxies].append(best_val_metric.item())
                 if wandb_log and master_process:
                     # 🐝 Close your wandb run
                     wandb.finish()
                 break
 
-print(best_metric_values)
-print(best_valloss_values)
-print(best_trainloss_values)
+print(metric_values)
+print(valloss_values)
+print(trainloss_values)
 
 with open(os.path.join(out_dir, 'best_val_losses.pickle'), 'wb') as handle:
-    pickle.dump(best_valloss_values, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(valloss_values, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 with open(os.path.join(out_dir, 'best_train_losses.pickle'), 'wb') as handle:
-    pickle.dump(best_trainloss_values, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(trainloss_values, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 with open(os.path.join(out_dir, 'best_metrics.pickle'), 'wb') as handle:
-    pickle.dump(best_metric_values, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(metric_values, handle, protocol=pickle.HIGHEST_PROTOCOL)
